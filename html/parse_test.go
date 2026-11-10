@@ -542,3 +542,42 @@ func TestDepthLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestDuplicateAttributesIntegrationPoint(t *testing.T) {
+	// Browsers keep only the first of several attributes with the same name, so
+	// <annotation-xml encoding="x" encoding="text/html"> is not an HTML
+	// integration point: the <style> is a MathML element and the <img> breaks
+	// out of foreign content as a real element. Honoring the second encoding
+	// would instead parse the <img> as raw text inside an HTML <style>, hiding
+	// it from sanitizers that walk the parsed tree.
+	const src = `<math><annotation-xml encoding="x" encoding="text/html"><style><img src=x onerror=alert(1)>`
+	doc, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var annotation, img *Node
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n.Type == ElementNode {
+			switch {
+			case n.Namespace == "math" && n.Data == "annotation-xml":
+				annotation = n
+			case n.Namespace == "" && n.DataAtom == atom.Img:
+				img = n
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	if annotation == nil {
+		t.Fatal("annotation-xml element not found")
+	}
+	if len(annotation.Attr) != 1 || annotation.Attr[0] != (Attribute{Key: "encoding", Val: "x"}) {
+		t.Errorf("annotation-xml attributes: got %v, want [{ encoding x}]", annotation.Attr)
+	}
+	if img == nil {
+		t.Error("<img> was not parsed as an element")
+	}
+}
